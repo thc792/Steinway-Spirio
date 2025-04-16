@@ -125,7 +125,24 @@ document.addEventListener('DOMContentLoaded', () => {
         Tone.Transport.bpm.value = fileOriginalBPM; Tone.Transport.cancel(0);
         parsedMidiData.tracks.forEach((track, trackIndex) => {
             track.notes.forEach(note => {
-                allNotesSorted.push({ midi: note.midi, name: note.name, originalTime: note.time, originalDuration: note.duration, velocity: note.velocity, trackIndex: trackIndex });
+                // Debug: stampa tutte le note mentre vengono processate
+                console.log('Processando nota:', {
+                    name: note.name,
+                    midi: note.midi,
+                    isSharp: note.name.includes('#'),
+                    isFlat: note.name.includes('b')
+                });
+                
+                allNotesSorted.push({
+                    midi: note.midi,
+                    name: note.name,
+                    originalTime: note.time,
+                    originalDuration: note.duration,
+                    velocity: note.velocity,
+                    trackIndex: trackIndex,
+                    isSharp: note.name.includes('#'),
+                    isFlat: note.name.includes('b')  // Aggiungi questa informazione
+                });
                 Tone.Transport.scheduleOnce(time => { synth.triggerAttackRelease(note.name, note.duration, time, note.velocity); }, note.time);
             });
         });
@@ -161,7 +178,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!toneJsStarted) { await initializeTone(); if (!toneJsStarted) return; }
         if (isPlaying || !parsedMidiData || allNotesSorted.length === 0) { console.log("Play ignorato."); return; }
         if (isPaused) {
-             Tone.Transport.start(); console.log(`Ripresa animazione e audio da ${Tone.Transport.seconds.toFixed(2)}s`);
+             Tone.Transport.start(); console.log(`Ripresa animazione e audio da ${Tone.Transport.seconds.toFixed(2)}s`)
         } else {
             nextNoteIndexToAdd = 0; activeNotes = []; pausedTime = 0;
             // Resetta conteggi precisione all'avvio da zero
@@ -193,14 +210,36 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Helper per Creare VexFlow Notes ---
-    function createVexNoteElement(noteData) { /* ... (invariato) ... */
+    function createVexNoteElement(noteData) {
         if (!noteData || !noteData.duration) { console.warn("Dati nota invalidi per createVexNoteElement:", noteData); return null; }
         const { treble: trebleKeys, bass: bassKeys, duration } = noteData;
         const isRest = false; let trebleVex, bassVex;
         try {
+            // Debug: stampa le note che stiamo per creare
+            if (trebleKeys && trebleKeys.length > 0) {
+                trebleKeys.forEach(key => {
+                    if (key.includes('d#/5')) {
+                        console.log('Trovato Re diesis C5:', {
+                            nota: key,
+                            ottava: key.split('/')[1],
+                            alterazione: key.includes('#') ? '#' : 'nessuna'
+                        });
+                    }
+                });
+            }
+
             trebleVex = (trebleKeys && trebleKeys.length > 0) ? new VF.StaveNote({ keys: trebleKeys, duration: duration, clef: 'treble', auto_stem: true }) : new VF.GhostNote({ duration: duration });
             bassVex = (bassKeys && bassKeys.length > 0) ? new VF.StaveNote({ keys: bassKeys, duration: duration, clef: 'bass', auto_stem: true }) : new VF.GhostNote({ duration: duration });
-            /* Modificatori commentati */
+
+            // Se la nota è alterata (diesis), aggiungi il colore verde
+            if (noteData.isSharp) {
+                console.log('Colorando nota alterata:', noteData);
+                trebleVex.setStyle({ fillStyle: '#008000', strokeStyle: '#008000' });
+            } else if (noteData.isFlat) {
+                console.log('Colorando nota alterata:', noteData);
+                trebleVex.setStyle({ fillStyle: '#0000FF', strokeStyle: '#0000FF' });
+            }
+
             if (trebleVex) trebleVex.setContext(context);
             if (bassVex) bassVex.setContext(context);
             return { treble: trebleVex, bass: bassVex };
@@ -233,7 +272,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         const sortNotes = (a, b) => { try { const noteA = new VF.Note({ keys: [a], duration: 'q' }); const noteB = new VF.Note({ keys: [b], duration: 'q' }); return noteA.getKeyProps()[0].int_value - noteB.getKeyProps()[0].int_value; } catch (e) { return 0; } };
         vexKeys.treble.sort(sortNotes); vexKeys.bass.sort(sortNotes);
-        const vexElement = createVexNoteElement({ treble: vexKeys.treble, bass: vexKeys.bass, duration: vexDuration });
+        const vexElement = createVexNoteElement({ treble: vexKeys.treble, bass: vexKeys.bass, duration: vexDuration, isSharp: group.some(note => note.isSharp), isFlat: group.some(note => note.isFlat) });
         if (!vexElement) return null;
         let estimatedWidth = 50 + Math.max(vexKeys.treble.length, vexKeys.bass.length) * 5;
         return { info: { id: noteCounter, vexElement: vexElement, notes: midiNoteNames, originalStartTime: firstNoteData.originalTime, x: initialX, width: estimatedWidth, isRemovable: false }, notesConsumed: group.length };
@@ -241,7 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Loop Principale Disegno/Animazione ---
     function draw(timestamp) {
-        if (!isPlaying) { animationId = null; return; }
+        if (!isPlaying) return;
 
         // 1. Pulisci Canvas
         context.clearRect(0, 0, canvas.width, canvas.height);
@@ -343,6 +382,52 @@ document.addEventListener('DOMContentLoaded', () => {
              if (lastLeftmostNoteId !== null) {
                  lastLeftmostNoteId = null;
              }
+        }
+
+        // Dopo aver disegnato le note, prova a identificare quelle alterate
+        if (nextNoteIndexToAdd > 0 && allNotesSorted.length > 0) {
+            const currentNote = allNotesSorted[nextNoteIndexToAdd - 1];
+            if (currentNote && currentNote.name && currentNote.name.includes('#')) {
+                // Debug: stampa la nota alterata
+                console.log('Nota alterata trovata:', currentNote);
+                
+                // Salva il colore corrente
+                const oldFill = context.fillStyle;
+                context.fillStyle = '#008000';  // verde per i diesis
+                context.font = 'bold 14px Arial';
+                
+                // Calcola la posizione del diesis
+                // Nota: scrollX è la posizione corrente dello scroll
+                const x = canvas.width / 2 - scrollX;  // posizione orizzontale relativa allo scroll
+                const noteName = currentNote.name.replace('#', ''); // Rimuovi il # per ottenere la posizione base
+                const y = trebleStave.getYForNote(noteName);
+                
+                // Disegna il diesis leggermente spostato a sinistra della nota
+                context.fillText('♯', x - 20, y + 4);
+                
+                // Ripristina il colore
+                context.fillStyle = oldFill;
+            } else if (currentNote && currentNote.name && currentNote.name.includes('b')) {
+                // Debug: stampa la nota alterata
+                console.log('Nota alterata trovata:', currentNote);
+                
+                // Salva il colore corrente
+                const oldFill = context.fillStyle;
+                context.fillStyle = '#0000FF';  // blu per i bemolli
+                context.font = 'bold 14px Arial';
+                
+                // Calcola la posizione del bemolle
+                // Nota: scrollX è la posizione corrente dello scroll
+                const x = canvas.width / 2 - scrollX;  // posizione orizzontale relativa allo scroll
+                const noteName = currentNote.name.replace('b', ''); // Rimuovi il b per ottenere la posizione base
+                const y = trebleStave.getYForNote(noteName);
+                
+                // Disegna il bemolle leggermente spostato a sinistra della nota
+                context.fillText('♭', x - 20, y + 4);
+                
+                // Ripristina il colore
+                context.fillStyle = oldFill;
+            }
         }
 
         // 6. Richiedi Prossimo Frame

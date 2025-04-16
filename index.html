@@ -9,6 +9,8 @@
     <script src="https://unpkg.com/@tonejs/midi"></script>
     <!-- Carica Tone.js per l'audio -->
     <script src="https://unpkg.com/tone"></script>
+    <!-- Carica il file CSS personalizzato -->
+    <link rel="stylesheet" href="style.css">
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; /* Font più moderno */
@@ -136,6 +138,10 @@
         .error-flash { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(255, 0, 0, 0.3); z-index: 100; pointer-events: none; animation: fadeOut 0.2s ease-out forwards; }
         @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
 
+        /* Assicurati che il canvas sia trasparente */
+        #score {
+            background: transparent;
+        }
     </style>
 </head>
 <body>
