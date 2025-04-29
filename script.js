@@ -1,5 +1,14 @@
+/*
+ * Copyright (c) 2025 [lorenzetti giuseppe www.pianohitech.com]
+ * Distributed under the MIT License. See LICENSE.md for details.
+ *
+ * Pentagramma MIDI Scorrevole (Player)
+ * Descrizione: Visualizzatore MIDI interattivo con VexFlow e Tone.js
+ * Autore: [lorenzetti giuseppe]
+ * Versione: 1.0 (o la versione attuale)
+ */
 document.addEventListener('DOMContentLoaded', () => {
-    // --- Setup Globale ---
+    // --- Global Setup ---
     const VF = Vex.Flow;
     const scoreContainer = document.getElementById('score-container');
     const canvas = document.getElementById('score-canvas');
@@ -13,18 +22,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const playBtn = document.getElementById('play-btn');
     const pauseBtn = document.getElementById('pause-btn');
     const stopBtn = document.getElementById('stop-btn');
-    const accuracyDisplay = document.getElementById('accuracy-display'); // !!! Nuovo elemento !!!
-    const removalZoneX = 100;
+    const accuracyDisplay = document.getElementById('accuracy-display');
+    const removalZoneX = 100; // Reference
 
-    // Verifica elementi essenziali
-    if (!scoreContainer || !canvas || !midiStatusDiv || !lastNoteDiv || !fileInput || !fileStatusSpan || !playbackTempoDiv || !speedSlider || !bpmDisplay || !playBtn || !pauseBtn || !stopBtn || !accuracyDisplay) { // !!! Aggiunto check accuracyDisplay !!!
-        console.error("Errore FATALE: Elementi HTML essenziali mancanti. Controlla gli ID."); alert("Errore critico: Impossibile trovare elementi HTML necessari."); return;
+    // Check essential elements
+    if (!scoreContainer || !canvas || !midiStatusDiv || !lastNoteDiv || !fileInput || !fileStatusSpan || !playbackTempoDiv || !speedSlider || !bpmDisplay || !playBtn || !pauseBtn || !stopBtn || !accuracyDisplay) {
+        console.error("FATAL Error: Essential HTML elements missing. Check IDs."); alert("Critical error: Cannot find necessary HTML elements."); return;
     }
-    if (typeof Vex === 'undefined' || typeof Vex.Flow === 'undefined') { console.error("Errore FATALE: VexFlow non caricato."); alert("Errore critico: Libreria VexFlow non trovata."); return; }
-    if (typeof Midi === 'undefined') { console.error("Errore FATALE: @tonejs/midi non caricato."); alert("Errore critico: Libreria @tonejs/midi non trovata."); return; }
-    if (typeof Tone === 'undefined') { console.error("Errore FATALE: Tone.js non caricato."); alert("Errore critico: Libreria Tone.js non trovata."); return; }
+    if (typeof Vex === 'undefined' || typeof Vex.Flow === 'undefined') { console.error("FATAL Error: VexFlow not loaded."); alert("Critical error: VexFlow library not found."); return; }
+    if (typeof Midi === 'undefined') { console.error("FATAL Error: @tonejs/midi not loaded."); alert("Critical error: @tonejs/midi library not found."); return; }
+    if (typeof Tone === 'undefined') { console.error("FATAL Error: Tone.js not loaded."); alert("Critical error: Tone.js library not found."); return; }
 
-    // --- Setup VexFlow (Canvas) ---
+    // --- VexFlow Setup (Canvas) ---
     const renderer = new VF.Renderer(canvas, VF.Renderer.Backends.CANVAS);
     const context = renderer.getContext();
     let containerWidth = scoreContainer.clientWidth;
@@ -36,493 +45,586 @@ document.addEventListener('DOMContentLoaded', () => {
         renderer.resize(containerWidth, containerHeight);
         staveWidth = containerWidth > 60 ? containerWidth - 40 : containerWidth;
         console.log("Canvas resized:", containerWidth, containerHeight);
+        if (isPaused && !isDragging) { requestAnimationFrame(draw); }
     });
 
-    // --- Setup Tone.js ---
+    // --- Tone.js Setup (Optional Audio) ---
     let synth = null; let toneJsStarted = false;
-    async function initializeTone() { /* ... (invariato) ... */
+    async function initializeTone() {
         if (toneJsStarted) return;
         try {
             await Tone.start();
+            console.log("Tone.js AudioContext started by user interaction.");
             synth = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'triangle' }, envelope: { attack: 0.01, decay: 0.1, sustain: 0.3, release: 0.5 } }).toDestination();
-            toneJsStarted = true; console.log("Tone.js avviato e synth creato."); updateButtonStates();
-        } catch (e) { console.error("Errore durante l'avvio di Tone.js:", e); alert("Impossibile avviare l'audio."); }
+            toneJsStarted = true; console.log("Tone.js synth created (Audio playback enabled)."); updateButtonStates();
+        } catch (e) { console.error("Error starting Tone.js or creating synth:", e); alert("Could not start audio context or synth."); }
     }
 
-    // --- Variabili Stato Playback e Animazione ---
+    // --- Playback and Animation State Variables ---
     let animationId = null; let activeNotes = []; let noteCounter = 0;
     let parsedMidiData = null; let allNotesSorted = []; let fileOriginalBPM = 120;
     let currentVisualBPM = 100;
     let scrollPixelsPerFrame = calculateScrollPixelsPerFrame(currentVisualBPM);
     let isPlaying = false; let isPaused = false;
-    let playbackStartTime = 0; let pausedTime = 0;
     let nextNoteIndexToAdd = 0;
     let highlightElement = null;
     const noteVisualSpacing = 120;
     const chordTimeTolerance = 0.05;
-    // !!! Variabili per la precisione !!!
+    // Accuracy Variables
     let notesAttempted = 0;
     let notesHitCorrectly = 0;
-    let lastLeftmostNoteId = null; // Per tracciare la nota target
-
-    // --- Variabili Pentagramma ---
+    let lastLeftmostNoteId = null;
+    // Manual Scroll Variables
+    let manualScrollOffset = 0; let isDragging = false; let lastDragX = 0;
+    // Stave Variables
     let staveWidth = containerWidth > 60 ? containerWidth - 40 : containerWidth;
     const staveX = 20; const trebleY = 40; const bassY = 140;
 
-    // --- Funzioni Utilità ---
-    function midiNumberToNoteName(midiNumber) { /* ... (invariato) ... */
+    // --- Variabili Globali per Armatura Chiave ---
+    let currentKeySignature = "C major"; // Default
+    let keySignatureAccidentals = {}; // Mappa: { 'B': 'b', 'E': 'b', 'A': 'b' } per Eb major
+
+    // --- Utility Functions ---
+
+    // Mappa per convertire nomi note in indice (0=C, 1=C#, ..., 11=B)
+    const noteNameToIndex = {
+        'c': 0, 'c#': 1, 'db': 1, 'd': 2, 'd#': 3, 'eb': 3, 'e': 4, 'fb': 4, 'e#': 5,
+        'f': 5, 'f#': 6, 'gb': 6, 'g': 7, 'g#': 8, 'ab': 8, 'a': 9, 'a#': 10, 'bb': 10,
+        'b': 11, 'cb': 11, 'b#': 0
+    };
+    // Mappa inversa (solo naturali)
+    const indexToNaturalName = ['C', 'C', 'D', 'D', 'E', 'F', 'F', 'G', 'G', 'A', 'A', 'B'];
+
+    function midiNumberToNoteName(midiNumber, keyAccidentals = {}) {
+        // keyAccidentals: Oggetto come { 'B': 'b', 'E': 'b', 'A': 'b' }
         if (midiNumber < 0 || midiNumber > 127) return null;
-        const noteNames = ["c", "c#", "d", "d#", "e", "f", "f#", "g", "g#", "a", "a#", "b"];
-        const octave = Math.floor(midiNumber / 12) - 1; const noteIndex = midiNumber % 12;
-        return `${noteNames[noteIndex]}/${octave}`;
-    }
-    function mapSecondsToVexDuration(seconds, bpm) { /* ... (invariato) ... */
-        if (seconds <= 0 || bpm <= 0) return 'q';
-        const quarterNoteDuration = 60.0 / bpm; const ratio = seconds / quarterNoteDuration;
-        if (ratio >= 3.8) return 'w'; if (ratio >= 1.9) return 'h';
-        if (ratio >= 1.4) return 'hd'; if (ratio >= 0.9) return 'q';
-        if (ratio >= 0.65) return 'qd'; if (ratio >= 0.45) return '8';
-        if (ratio >= 0.30) return '8d'; if (ratio >= 0.22) return '16';
-        return '32';
-    }
-    function calculateScrollPixelsPerFrame(bpm) { /* ... (invariato) ... */
-        const minPPF = 0.5; const maxPPF = 4.0;
-        const minAllowedBPM = 20; const maxAllowedBPM = 200;
-        if (bpm <= minAllowedBPM) return minPPF; if (bpm >= maxAllowedBPM) return maxPPF;
-        const bpmRange = maxAllowedBPM - minAllowedBPM; const ppfRange = maxPPF - minPPF;
-        const normalizedBpm = (bpmRange === 0) ? 0 : (bpm - minAllowedBPM) / bpmRange;
-        return minPPF + normalizedBpm * ppfRange;
+        const octave = Math.floor(midiNumber / 12) - 1;
+        const noteIndex = midiNumber % 12; // 0-11
+
+        // 1. Trova il nome della nota naturale corrispondente
+        const naturalName = indexToNaturalName[noteIndex]; // Es. 'C', 'D', 'B'
+
+        // 2. Controlla se l'armatura altera questa nota naturale
+        const keyAccidental = keyAccidentals[naturalName]; // Es. 'b' per 'B' in Eb major, undefined altrimenti
+
+        // 3. Determina il nome finale
+        let finalName;
+        if (keyAccidental) {
+            // L'armatura altera questa nota. Costruisci il nome con l'alterazione dell'armatura.
+            // Verifica che l'indice MIDI corrisponda all'alterazione suggerita dall'armatura.
+            const expectedIndex = noteNameToIndex[naturalName.toLowerCase() + keyAccidental];
+            if (noteIndex === expectedIndex) {
+                finalName = naturalName.toLowerCase() + keyAccidental; // Es. "bb", "f#"
+            }
+        }
+
+        // 4. Se l'armatura non ha determinato il nome, usa la convenzione standard (C#, Eb, F#, Ab, Bb)
+        if (!finalName) {
+            const commonNames = ["c", "c#", "d", "eb", "e", "f", "f#", "g", "ab", "a", "bb", "b"];
+            finalName = commonNames[noteIndex];
+        }
+
+        return `${finalName}/${octave}`;
     }
 
-    // --- Gestione Caricamento File ---
+
+    function mapSecondsToVexDuration(seconds, bpm) {
+        if (seconds <= 0 || bpm <= 0) return 'q'; const qDur = 60.0 / bpm; const ratio = seconds / qDur;
+        if (ratio >= 3.9) return 'w'; if (ratio >= 1.9) return 'h'; if (ratio >= 1.4) return 'hd';
+        if (ratio >= 0.9) return 'q'; if (ratio >= 0.65) return 'qd'; if (ratio >= 0.45) return '8';
+        if (ratio >= 0.30) return '8d'; if (ratio >= 0.22) return '16'; return '32';
+    }
+
+    function calculateScrollPixelsPerFrame(bpm) {
+        const minPPF = 0.5; const maxPPF = 4.0; const minBPM = 20; const maxBPM = 300;
+        if (bpm <= minBPM) return minPPF; if (bpm >= maxBPM) return maxPPF;
+        const bpmR = maxBPM - minBPM; const ppfR = maxPPF - minPPF;
+        const normBpm = (bpmR === 0) ? 0 : (bpm - minBPM) / bpmR; return minPPF + normBpm * ppfR;
+    }
+
+    // --- File Loading ---
     fileInput.addEventListener('change', handleFileSelect);
-    function handleFileSelect(event) { /* ... (invariato, chiama stopAnimation) ... */
-        const file = event.target.files[0]; if (!file) { fileStatusSpan.textContent = "Nessun file selezionato."; return; }
-        fileStatusSpan.textContent = `Caricamento: ${file.name}...`;
-        stopAnimation();
+    function handleFileSelect(event) {
+        const file = event.target.files[0]; if (!file) { fileStatusSpan.textContent = "No file selected."; return; }
+        fileStatusSpan.textContent = `Loading: ${file.name}...`; stopAnimation();
         const reader = new FileReader();
         reader.onload = async function(e) {
             try {
-                if (!toneJsStarted) { await initializeTone(); if (!toneJsStarted) return; }
-                parsedMidiData = new Midi(e.target.result); console.log("MIDI Parsato:", parsedMidiData);
-                fileStatusSpan.textContent = `Caricato: ${file.name}`;
+                parsedMidiData = new Midi(e.target.result); console.log("MIDI Parsed:", parsedMidiData);
+                fileStatusSpan.textContent = `Loaded: ${file.name}`;
+                // Processa MIDI e armatura PRIMA di resettare l'animazione
                 processMidiDataAndScheduleAudio();
                 currentVisualBPM = fileOriginalBPM; speedSlider.value = currentVisualBPM;
                 bpmDisplay.textContent = `${Math.round(currentVisualBPM)} BPM`;
                 scrollPixelsPerFrame = calculateScrollPixelsPerFrame(currentVisualBPM);
                 updateButtonStates();
-            } catch (error) { console.error("Errore parsing MIDI o scheduling:", error); alert(`Errore nel leggere o processare il file MIDI "${file.name}".`); fileStatusSpan.textContent = "Errore caricamento."; resetAnimation(); }
+                resetAnimation(); // Ora resetAnimation può usare l'armatura
+            } catch (error) { console.error("Error parsing MIDI:", error); alert(`Error reading MIDI file "${file.name}".`); fileStatusSpan.textContent = "Load Error."; resetAnimation(); }
         };
-        reader.onerror = function(e) { console.error("Errore lettura file:", e); alert("Impossibile leggere il file selezionato."); fileStatusSpan.textContent = "Errore lettura file."; resetAnimation(); };
+        reader.onerror = function(e) { console.error("File read error:", e); alert("Could not read file."); fileStatusSpan.textContent = "File Read Error."; resetAnimation(); };
         reader.readAsArrayBuffer(file);
     }
 
-    // --- Processamento Dati MIDI e Scheduling Audio ---
-    function processMidiDataAndScheduleAudio() { /* ... (invariato) ... */
-        if (!parsedMidiData || !synth) return; allNotesSorted = [];
+    // --- MIDI Data Processing & Audio Scheduling (Optional) ---
+    function processMidiDataAndScheduleAudio() {
+        if (!parsedMidiData) return; allNotesSorted = [];
         fileOriginalBPM = parsedMidiData.header.tempos[0]?.bpm || 120;
-        playbackTempoDiv.textContent = `Tempo File: ${Math.round(fileOriginalBPM)} BPM`;
-        Tone.Transport.bpm.value = fileOriginalBPM; Tone.Transport.cancel(0);
-        parsedMidiData.tracks.forEach((track, trackIndex) => {
+        playbackTempoDiv.textContent = `File Tempo: ${Math.round(fileOriginalBPM)} BPM`;
+
+        // --- Leggi e processa l'armatura di chiave ---
+        currentKeySignature = "C major"; // Default
+        keySignatureAccidentals = {}; // Reset
+        if (parsedMidiData.header.keySignatures.length > 0) {
+            const ks = parsedMidiData.header.keySignatures[0];
+            // Tenta di ottenere la tonalità completa (es. "Eb major")
+            let keyName = ks.key;
+            if (keyName) {
+                 currentKeySignature = keyName + (ks.scale === "major" ? " major" : " minor");
+                 console.log("Detected Key Signature:", currentKeySignature);
+
+                 // Prova a usare VexFlow per ottenere le alterazioni specifiche per quella tonalità
+                 const keySpec = VF.keySignature.keySpecs[keyName + (ks.scale === "major" ? "" : "m")];
+                 if (keySpec && keySpec.accidental && keySpec.note) {
+                     keySpec.accidental.forEach((acc, index) => {
+                         const noteName = keySpec.note[index]; // Nota naturale (C, D, E...)
+                         keySignatureAccidentals[noteName] = acc; // 'b' o '#'
+                     });
+                     console.log("Key Signature Accidentals Map (VexFlow):", keySignatureAccidentals);
+                 } else {
+                     console.warn("Could not find VexFlow keySpec for:", keyName + (ks.scale === "major" ? "" : "m"), ". Using fallback.");
+                     // Fallback manuale basato sul numero di alterazioni (meno preciso per minori)
+                     const fifths = VF.Music.sharpToFifth(keyName); // Numero di diesis/bemolle
+                     const sharps = ['F', 'C', 'G', 'D', 'A', 'E', 'B'];
+                     const flats = ['B', 'E', 'A', 'D', 'G', 'C', 'F'];
+                     if (fifths > 0) {
+                         for (let i = 0; i < fifths; i++) keySignatureAccidentals[sharps[i]] = '#';
+                     } else if (fifths < 0) {
+                         for (let i = 0; i < -fifths; i++) keySignatureAccidentals[flats[i]] = 'b';
+                     }
+                     console.log("Key Signature Accidentals Map (Fallback):", keySignatureAccidentals);
+                 }
+            } else {
+                 console.log("Key Signature found in MIDI but key name is missing, assuming C major.");
+                 currentKeySignature = "C major";
+            }
+        } else {
+            console.log("No Key Signature found in MIDI, assuming C major.");
+            currentKeySignature = "C major";
+        }
+        // --- Fine gestione armatura ---
+
+
+        // Optional Audio Scheduling
+        if (synth && toneJsStarted) {
+             Tone.Transport.bpm.value = fileOriginalBPM;
+             Tone.Transport.cancel(0);
+             let scheduledCount = 0;
+             parsedMidiData.tracks.forEach((track) => {
+                 track.notes.forEach(note => {
+                     // Usa il nome influenzato dall'armatura anche per l'audio? Potrebbe essere più corretto.
+                     const audioNoteName = midiNumberToNoteName(note.midi, keySignatureAccidentals) || note.name;
+                     if (audioNoteName) {
+                         Tone.Transport.scheduleOnce(time => {
+                              if (synth) synth.triggerAttackRelease(audioNoteName, note.duration, time, note.velocity);
+                         }, note.time);
+                         scheduledCount++;
+                     }
+                 });
+             });
+             console.log(`Scheduled ${scheduledCount} notes on Tone.Transport.`);
+        } else { /* ... log skip reasons ... */ }
+
+        // Process notes for VISUAL display
+        parsedMidiData.tracks.forEach((track) => {
             track.notes.forEach(note => {
-                // Debug: stampa tutte le note mentre vengono processate
-                console.log('Processando nota:', {
-                    name: note.name,
-                    midi: note.midi,
-                    isSharp: note.name.includes('#'),
-                    isFlat: note.name.includes('b')
-                });
-                
-                allNotesSorted.push({
-                    midi: note.midi,
-                    name: note.name,
-                    originalTime: note.time,
-                    originalDuration: note.duration,
-                    velocity: note.velocity,
-                    trackIndex: trackIndex,
-                    isSharp: note.name.includes('#'),
-                    isFlat: note.name.includes('b')  // Aggiungi questa informazione
-                });
-                Tone.Transport.scheduleOnce(time => { synth.triggerAttackRelease(note.name, note.duration, time, note.velocity); }, note.time);
+                allNotesSorted.push({ midi: note.midi, originalTime: note.time, originalDuration: note.duration, velocity: note.velocity });
             });
         });
         allNotesSorted.sort((a, b) => a.originalTime - b.originalTime);
-        console.log(`Estratte ${allNotesSorted.length} note e schedulate su Tone.Transport.`);
+        console.log(`Extracted ${allNotesSorted.length} notes for visual display.`);
     }
 
-    // --- Controlli Animazione/Audio ---
+    // --- Animation/Audio Controls ---
     function resetAnimation() {
         if (animationId) { cancelAnimationFrame(animationId); animationId = null; }
-        Tone.Transport.stop(); Tone.Transport.cancel(0); Tone.Transport.position = 0;
-        isPlaying = false; isPaused = false; pausedTime = 0;
-        activeNotes = [];
-        nextNoteIndexToAdd = 0;
-        // !!! Resetta conteggi precisione !!!
-        notesAttempted = 0;
-        notesHitCorrectly = 0;
-        lastLeftmostNoteId = null;
-        updateAccuracyDisplay(); // Aggiorna display a N/A o 0/0
-        playbackTempoDiv.textContent = parsedMidiData ? `Tempo File: ${Math.round(fileOriginalBPM)} BPM` : "Tempo File: N/D";
+        if (typeof Tone !== 'undefined' && Tone.Transport) { Tone.Transport.stop(); Tone.Transport.cancel(0); Tone.Transport.position = 0; }
+        isPlaying = false; isPaused = false; activeNotes = []; nextNoteIndexToAdd = 0;
         if (highlightElement) highlightElement.remove(); highlightElement = null;
+        notesAttempted = 0; notesHitCorrectly = 0; lastLeftmostNoteId = null; updateAccuracyDisplay();
+        removeManualScrollListeners(); manualScrollOffset = 0; isDragging = false;
+        playbackTempoDiv.textContent = parsedMidiData ? `File Tempo: ${Math.round(fileOriginalBPM)} BPM` : "File Tempo: N/A";
         context.clearRect(0, 0, canvas.width, canvas.height);
         try {
             const trebleStave = new VF.Stave(staveX, trebleY, staveWidth).addClef("treble");
             const bassStave = new VF.Stave(staveX, bassY, staveWidth).addClef("bass");
+            // Opzionale: Disegnare l'armatura di chiave all'inizio?
+            // if (currentKeySignature && VF.keySignature.keySpecs[currentKeySignature.split(' ')[0]]) {
+            //     trebleStave.addKeySignature(currentKeySignature.split(' ')[0]);
+            //     bassStave.addKeySignature(currentKeySignature.split(' ')[0]);
+            // }
             trebleStave.setContext(context).draw(); bassStave.setContext(context).draw();
-        } catch(e) { console.error("Errore disegno righi iniziali:", e); }
-        updateButtonStates();
-        console.log("Animazione e Audio resettati/stoppati.");
+        } catch(e) { console.error("Error drawing initial staves:", e); }
+        updateButtonStates(); console.log("Animation reset.");
     }
 
-    async function playAnimation() { /* ... (invariato) ... */
-        if (!toneJsStarted) { await initializeTone(); if (!toneJsStarted) return; }
-        if (isPlaying || !parsedMidiData || allNotesSorted.length === 0) { console.log("Play ignorato."); return; }
+    async function playAnimation() {
+        if (isPlaying || !parsedMidiData || allNotesSorted.length === 0) return;
         if (isPaused) {
-             Tone.Transport.start(); console.log(`Ripresa animazione e audio da ${Tone.Transport.seconds.toFixed(2)}s`)
+            console.log(`Resuming visual animation.`);
+            if (manualScrollOffset !== 0) {
+                console.log(`Applying manual offset (${manualScrollOffset.toFixed(1)}px)`);
+                activeNotes.forEach(noteInfo => { noteInfo.x += manualScrollOffset; });
+            }
+            manualScrollOffset = 0; isDragging = false; removeManualScrollListeners();
+            if (typeof Tone !== 'undefined' && Tone.Transport && synth && toneJsStarted) {
+                Tone.Transport.start(); console.log(`Resuming audio from ${Tone.Transport.seconds.toFixed(2)}s`);
+            }
         } else {
-            nextNoteIndexToAdd = 0; activeNotes = []; pausedTime = 0;
-            // Resetta conteggi precisione all'avvio da zero
+            console.log("Starting visual animation from beginning.");
+            removeManualScrollListeners(); manualScrollOffset = 0; isDragging = false;
+            nextNoteIndexToAdd = 0; activeNotes = [];
             notesAttempted = 0; notesHitCorrectly = 0; lastLeftmostNoteId = null; updateAccuracyDisplay();
-            Tone.Transport.position = 0; Tone.Transport.start();
-            console.log("Avvio animazione e audio da inizio.");
+            if (typeof Tone !== 'undefined' && Tone.Transport && synth && toneJsStarted) {
+                Tone.Transport.position = 0; Tone.Transport.start(); console.log("Starting audio from beginning.");
+            } else { console.log("Starting visuals only (audio not ready or not used).") }
         }
         isPaused = false; isPlaying = true; updateButtonStates();
         if (animationId) cancelAnimationFrame(animationId);
         animationId = requestAnimationFrame(draw);
     }
 
-    function pauseAnimation() { /* ... (invariato) ... */
-        if (!isPlaying) { console.log("Pausa ignorata."); return; }
-        Tone.Transport.pause();
+    function pauseAnimation() {
+        if (!isPlaying) { console.log("Pause ignored."); return; }
+        if (typeof Tone !== 'undefined' && Tone.Transport) { Tone.Transport.pause(); console.log(`Audio paused at ${Tone.Transport.seconds.toFixed(2)}s`); }
         if (animationId) { cancelAnimationFrame(animationId); animationId = null; }
-        isPlaying = false; isPaused = true; updateButtonStates();
-        console.log(`Animazione e audio in pausa a ${Tone.Transport.seconds.toFixed(2)}s`);
+        isPlaying = false; isPaused = true;
+        manualScrollOffset = 0; isDragging = false; addManualScrollListeners();
+        updateButtonStates(); console.log(`Visual animation paused.`);
     }
 
-    function stopAnimation() { resetAnimation(); }
+    function stopAnimation() {
+        removeManualScrollListeners(); manualScrollOffset = 0; isDragging = false;
+        resetAnimation();
+    }
 
-    // --- Aggiorna Stato Bottoni ---
-    function updateButtonStates() { /* ... (invariato) ... */
-        const hasMidi = !!parsedMidiData;
-        playBtn.disabled = isPlaying || !hasMidi || !toneJsStarted;
+    function updateButtonStates() {
+        const hasMidi = !!parsedMidiData; const canPlay = hasMidi;
+        playBtn.disabled = isPlaying || !canPlay;
         pauseBtn.disabled = !isPlaying || isPaused || !hasMidi;
         stopBtn.disabled = (!isPlaying && !isPaused) || !hasMidi;
     }
 
-    // --- Helper per Creare VexFlow Notes ---
-    function createVexNoteElement(noteData) {
-        if (!noteData || !noteData.duration) { console.warn("Dati nota invalidi per createVexNoteElement:", noteData); return null; }
-        const { treble: trebleKeys, bass: bassKeys, duration } = noteData;
-        const isRest = false; let trebleVex, bassVex;
-        try {
-            // Debug: stampa le note che stiamo per creare
-            if (trebleKeys && trebleKeys.length > 0) {
-                trebleKeys.forEach(key => {
-                    if (key.includes('d#/5')) {
-                        console.log('Trovato Re diesis C5:', {
-                            nota: key,
-                            ottava: key.split('/')[1],
-                            alterazione: key.includes('#') ? '#' : 'nessuna'
-                        });
-                    }
-                });
-            }
-
-            trebleVex = (trebleKeys && trebleKeys.length > 0) ? new VF.StaveNote({ keys: trebleKeys, duration: duration, clef: 'treble', auto_stem: true }) : new VF.GhostNote({ duration: duration });
-            bassVex = (bassKeys && bassKeys.length > 0) ? new VF.StaveNote({ keys: bassKeys, duration: duration, clef: 'bass', auto_stem: true }) : new VF.GhostNote({ duration: duration });
-
-            // Se la nota è alterata (diesis), aggiungi il colore verde
-            if (noteData.isSharp) {
-                console.log('Colorando nota alterata:', noteData);
-                trebleVex.setStyle({ fillStyle: '#008000', strokeStyle: '#008000' });
-            } else if (noteData.isFlat) {
-                console.log('Colorando nota alterata:', noteData);
-                trebleVex.setStyle({ fillStyle: '#0000FF', strokeStyle: '#0000FF' });
-            }
-
-            if (trebleVex) trebleVex.setContext(context);
-            if (bassVex) bassVex.setContext(context);
-            return { treble: trebleVex, bass: bassVex };
-        } catch (error) { console.error(`Errore VexFlow in createVexNoteElement (Input: ${JSON.stringify(noteData)}):`, error); return null; }
+    function addManualScrollListeners() {
+        if (scoreContainer && isPaused) { scoreContainer.addEventListener('mousedown', handleMouseDown); scoreContainer.style.cursor = 'grab'; console.log("Manual scroll listeners ADDED."); }
+    }
+    function removeManualScrollListeners() {
+        if (scoreContainer) { scoreContainer.removeEventListener('mousedown', handleMouseDown); scoreContainer.style.cursor = 'default'; }
+        document.removeEventListener('mousemove', handleMouseMove); document.removeEventListener('mouseup', handleMouseUp); isDragging = false;
+    }
+    function handleMouseDown(event) {
+        if (!isPaused) { removeManualScrollListeners(); return; } isDragging = true; lastDragX = event.clientX; scoreContainer.style.cursor = 'grabbing'; event.preventDefault();
+        document.addEventListener('mousemove', handleMouseMove); document.addEventListener('mouseup', handleMouseUp); console.log("Drag Start");
+    }
+    function handleMouseMove(event) {
+        if (!isDragging || !isPaused) { removeManualScrollListeners(); return; } const currentX = event.clientX; const deltaX = currentX - lastDragX; manualScrollOffset += deltaX; lastDragX = currentX;
+        if (!animationId) { animationId = requestAnimationFrame(draw); }
+    }
+    function handleMouseUp(event) {
+        if (!isDragging) return; isDragging = false; if (scoreContainer) scoreContainer.style.cursor = 'grab'; document.removeEventListener('mousemove', handleMouseMove); document.removeEventListener('mouseup', handleMouseUp);
+        console.log("Drag End, final offset for this pause:", manualScrollOffset.toFixed(1));
+        if (animationId && isPaused && !isDragging) { cancelAnimationFrame(animationId); animationId = null; } if(isPaused) requestAnimationFrame(draw);
     }
 
-    // --- Creazione Oggetto Nota per Animazione (Gestisce Raggruppamento) ---
-    function createNoteGroupInfo(startIndex, initialX) { /* ... (invariato) ... */
+
+    // --- Note Group Creation for Animation ---
+    function createNoteGroupInfo(startIndex, initialX) {
         if (startIndex >= allNotesSorted.length) return null;
         const firstNoteData = allNotesSorted[startIndex];
         const group = [firstNoteData]; let lastNoteTime = firstNoteData.originalTime;
-        let maxDuration = firstNoteData.originalDuration;
-        let lookaheadIndex = startIndex + 1;
+        let maxDuration = firstNoteData.originalDuration; let lookaheadIndex = startIndex + 1;
+
         while (lookaheadIndex < allNotesSorted.length && (allNotesSorted[lookaheadIndex].originalTime - lastNoteTime) < chordTimeTolerance) {
             const nextNote = allNotesSorted[lookaheadIndex]; group.push(nextNote);
             maxDuration = Math.max(maxDuration, nextNote.originalDuration); lastNoteTime = nextNote.originalTime; lookaheadIndex++;
         }
+
         const vexDuration = mapSecondsToVexDuration(maxDuration, fileOriginalBPM);
-        noteCounter++; const vexKeys = { treble: [], bass: [] }; const midiNoteNames = { treble: [], bass: [] };
-        group.forEach(noteDataMidi => {
-            let noteNameForVex = null;
-            if (noteDataMidi.name) { const match = noteDataMidi.name.match(/([a-gA-G][#bB]*)(-?\d+)/); if (match && match.length === 3) { noteNameForVex = `${match[1].toLowerCase()}/${match[2]}`; } }
-            if (!noteNameForVex) { noteNameForVex = midiNumberToNoteName(noteDataMidi.midi); }
-            if (noteNameForVex) {
-                const targetArrayVex = noteDataMidi.midi >= 60 ? vexKeys.treble : vexKeys.bass;
-                const targetArrayMidi = noteDataMidi.midi >= 60 ? midiNoteNames.treble : midiNoteNames.bass;
-                if (!targetArrayVex.includes(noteNameForVex)) targetArrayVex.push(noteNameForVex);
-                if (!targetArrayMidi.includes(noteNameForVex)) targetArrayMidi.push(noteNameForVex);
-            }
+        noteCounter++;
+        const vexKeys = { treble: [], bass: [] };
+        const midiNoteNamesForCheck = { treble: [], bass: [] };
+        let groupIsSharp = false; // Flag se il *nome generato* contiene '#'
+        let groupIsFlat = false;  // Flag se il *nome generato* contiene 'b' (come alterazione)
+
+        group.forEach(noteData => {
+            // *** Passa l'armatura a midiNumberToNoteName ***
+            const vexKey = midiNumberToNoteName(noteData.midi, keySignatureAccidentals);
+            if (vexKey) {
+                const isTreble = noteData.midi >= 60;
+                const targetArrayVex = isTreble ? vexKeys.treble : vexKeys.bass;
+                const targetArrayCheck = isTreble ? midiNoteNamesForCheck.treble : midiNoteNamesForCheck.bass;
+                if (!targetArrayVex.includes(vexKey)) targetArrayVex.push(vexKey);
+                if (!targetArrayCheck.includes(vexKey)) targetArrayCheck.push(vexKey);
+
+                // Determina colore/simbolo basato sul nome risultante (che ora considera l'armatura)
+                if (vexKey.includes('#')) {
+                    groupIsSharp = true;
+                }
+                if (vexKey.match(/[a-g]b\/\d+/i)) { // Cerca veri bemolle nel nome generato
+                    groupIsFlat = true;
+                }
+            } else { console.warn("Could not determine Vex key for MIDI:", noteData.midi); }
         });
-        const sortNotes = (a, b) => { try { const noteA = new VF.Note({ keys: [a], duration: 'q' }); const noteB = new VF.Note({ keys: [b], duration: 'q' }); return noteA.getKeyProps()[0].int_value - noteB.getKeyProps()[0].int_value; } catch (e) { return 0; } };
+
+        const sortNotes = (a, b) => {
+             try { const noteA = new VF.Note({ keys: [a], duration: 'q' }); const noteB = new VF.Note({ keys: [b], duration: 'q' }); return noteA.getKeyProps()[0].int_value - noteB.getKeyProps()[0].int_value; }
+             catch (e) { console.warn("Sorting error:", a, b, e); return 0; }
+        };
         vexKeys.treble.sort(sortNotes); vexKeys.bass.sort(sortNotes);
-        const vexElement = createVexNoteElement({ treble: vexKeys.treble, bass: vexKeys.bass, duration: vexDuration, isSharp: group.some(note => note.isSharp), isFlat: group.some(note => note.isFlat) });
-        if (!vexElement) return null;
-        let estimatedWidth = 50 + Math.max(vexKeys.treble.length, vexKeys.bass.length) * 5;
-        return { info: { id: noteCounter, vexElement: vexElement, notes: midiNoteNames, originalStartTime: firstNoteData.originalTime, x: initialX, width: estimatedWidth, isRemovable: false }, notesConsumed: group.length };
+
+        // Crea elemento VexFlow, passando le flag basate sul nome (influenzato dall'armatura)
+        const vexElement = createVexNoteElement({
+            treble: vexKeys.treble, bass: vexKeys.bass, duration: vexDuration,
+            isSharp: groupIsSharp,
+            isFlat: groupIsFlat
+        });
+
+        if (!vexElement) { console.error(`Failed VexElement creation for group starting at index ${startIndex}`); return null; }
+
+        // Estimate width
+        let estimatedWidth = 30;
+        try { if (vexElement.treble instanceof VF.StaveNote) { vexElement.treble.preFormat(); estimatedWidth = Math.max(estimatedWidth, vexElement.treble.getWidth()); } if (vexElement.bass instanceof VF.StaveNote) { vexElement.bass.preFormat(); estimatedWidth = Math.max(estimatedWidth, vexElement.bass.getWidth()); } }
+        catch(e) { console.warn("Could not get width", e); estimatedWidth = Math.max(estimatedWidth, 50); }
+
+
+        return {
+            info: {
+                id: noteCounter, vexElement: vexElement, notes: midiNoteNamesForCheck,
+                originalStartTime: firstNoteData.originalTime, x: initialX, width: estimatedWidth + 10, isRemovable: false
+            },
+            notesConsumed: group.length
+        };
     }
 
-    // --- Loop Principale Disegno/Animazione ---
+
+    // --- VexFlow Note Element Creation ---
+    function createVexNoteElement(noteData) {
+        // Prende le chiavi (ora influenzate dall'armatura) e le flag corrette
+        if (!noteData || typeof noteData.duration !== 'string' || noteData.duration.trim() === '') { return null; }
+        const { treble: trebleKeys, bass: bassKeys, duration, isSharp, isFlat } = noteData;
+        let trebleVex, bassVex;
+
+        try {
+            trebleVex = (trebleKeys && trebleKeys.length > 0) ? new VF.StaveNote({ keys: trebleKeys, duration: duration, clef: 'treble', auto_stem: true }) : new VF.GhostNote({ duration: duration });
+            bassVex = (bassKeys && bassKeys.length > 0) ? new VF.StaveNote({ keys: bassKeys, duration: duration, clef: 'bass', auto_stem: true }) : new VF.GhostNote({ duration: duration });
+
+            // *** COLORING based on correct flags ***
+            if (isSharp) { // Nome generato conteneva '#' -> GREEN
+                if (trebleVex.setStyle) trebleVex.setStyle({ fillStyle: '#008000', strokeStyle: '#008000' });
+                if (bassVex.setStyle) bassVex.setStyle({ fillStyle: '#008000', strokeStyle: '#008000' });
+            } else if (isFlat) { // Nome generato era un vero bemolle -> BLUE
+                if (trebleVex.setStyle) trebleVex.setStyle({ fillStyle: '#0000FF', strokeStyle: '#0000FF' });
+                if (bassVex.setStyle) bassVex.setStyle({ fillStyle: '#0000FF', strokeStyle: '#0000FF' });
+            }
+            // Note naturali (incluso B/E se non alterate da armatura) restano nere
+
+            // *** ADD MODIFIER SYMBOL based on correct flags ***
+            // Aggiungiamo il simbolo solo se necessario (cioè se la nota *non* è già alterata dall'armatura)
+            // Questa logica è complessa. Per ora, aggiungiamo il simbolo se la flag è true E la chiave lo contiene.
+            [trebleVex, bassVex].forEach(vexNote => {
+                if (vexNote instanceof VF.StaveNote) {
+                    if (isSharp) {
+                        vexNote.getKeys().forEach((key, index) => {
+                            // Aggiungi # solo se la nota naturale NON è già # nell'armatura
+                            const natural = indexToNaturalName[noteNameToIndex[key.split('/')[0]]];
+                            if (key.includes('#') && keySignatureAccidentals[natural] !== '#') {
+                                vexNote.addModifier(new VF.Accidental('#'), index);
+                            }
+                        });
+                    }
+                    if (isFlat) {
+                         vexNote.getKeys().forEach((key, index) => {
+                            // Aggiungi b solo se la nota naturale NON è già b nell'armatura
+                            const natural = indexToNaturalName[noteNameToIndex[key.split('/')[0]]];
+                            if (key.match(/[a-g]b\/\d+/i) && keySignatureAccidentals[natural] !== 'b') {
+                                vexNote.addModifier(new VF.Accidental('b'), index);
+                            }
+                         });
+                    }
+                    // Aggiungi bequadro se la nota è naturale MA l'armatura la altererebbe
+                    if (!isSharp && !isFlat) {
+                        vexNote.getKeys().forEach((key, index) => {
+                            const natural = indexToNaturalName[noteNameToIndex[key.split('/')[0]]];
+                            if (keySignatureAccidentals[natural]) { // Se l'armatura altera questa nota naturale
+                                vexNote.addModifier(new VF.Accidental('n'), index);
+                            }
+                        });
+                    }
+                }
+            });
+
+            if (trebleVex && trebleVex.setContext) trebleVex.setContext(context);
+            if (bassVex && bassVex.setContext) bassVex.setContext(context);
+
+            return { treble: trebleVex, bass: bassVex };
+        } catch (error) {
+             console.error(`VexFlow Error in createVexNoteElement:`, error); return null;
+        }
+    }
+
+
+    // --- Main Draw/Animation Loop ---
     function draw(timestamp) {
-        if (!isPlaying) return;
-
-        // 1. Pulisci Canvas
+        // 1. Clear
         context.clearRect(0, 0, canvas.width, canvas.height);
-
-        // 2. Disegna Pentagrammi
+        // 2. Draw Staves
         const trebleStave = new VF.Stave(staveX, trebleY, staveWidth).addClef("treble");
         const bassStave = new VF.Stave(staveX, bassY, staveWidth).addClef("bass");
-        trebleStave.setContext(context).draw();
-        bassStave.setContext(context).draw();
+        // Opzionale: Disegna armatura all'inizio
+        // if (currentKeySignature && VF.keySignature.keySpecs[currentKeySignature.split(' ')[0]]) {
+        //     const keyForVex = currentKeySignature.split(' ')[0];
+        //     trebleStave.addKeySignature(keyForVex);
+        //     bassStave.addKeySignature(keyForVex);
+        // }
+        trebleStave.setContext(context).draw(); bassStave.setContext(context).draw();
 
-        // 3. Aggiungi NUOVO GRUPPO di Note se c'è spazio visivo
-        const lastNote = activeNotes[activeNotes.length - 1];
-        if (nextNoteIndexToAdd < allNotesSorted.length &&
-            (!lastNote || lastNote.x <= containerWidth - noteVisualSpacing))
-        {
-            const initialX = containerWidth;
-            const groupResult = createNoteGroupInfo(nextNoteIndexToAdd, initialX);
-            if (groupResult && groupResult.info) {
-                activeNotes.push(groupResult.info);
-                nextNoteIndexToAdd += groupResult.notesConsumed;
-            } else {
-                console.warn(`Saltata nota MIDI all'indice ${nextNoteIndexToAdd} a causa di errore creazione gruppo.`);
-                nextNoteIndexToAdd++;
-            }
-        }
-
-        // 4. Aggiorna Posizione, Disegna, Trova la più a sinistra
-        let currentLeftmostNote = null; // Rinominato per chiarezza
-        let minX = Infinity;
-        const notesToKeep = [];
-        const tickContext = new VF.TickContext();
-
-        for (const noteInfo of activeNotes) {
-            noteInfo.x -= scrollPixelsPerFrame; // Aggiorna posizione VISIVA
-            noteInfo.isRemovable = false;
-            if (noteInfo.x + noteInfo.width < -20) continue;
-
-            if (noteInfo.x < containerWidth + noteInfo.width) {
-                 notesToKeep.push(noteInfo);
-                 // Trova la più a sinistra *che è visibile*
-                 if (noteInfo.x < minX && noteInfo.x + noteInfo.width > 0) {
-                     minX = noteInfo.x;
-                     currentLeftmostNote = noteInfo; // Aggiorna la nota più a sinistra corrente
-                 }
-            }
-
-            // Disegna solo se visibile
-            if (noteInfo.x < containerWidth && noteInfo.x + noteInfo.width > 0) {
-                let trebleShift = NaN; let bassShift = NaN;
-                try {
-                    if (isFinite(noteInfo.x)) {
-                         trebleShift = noteInfo.x - trebleStave.getNoteStartX();
-                         bassShift = noteInfo.x - bassStave.getNoteStartX();
-                    }
-                    if (noteInfo.vexElement.treble && isFinite(trebleShift)) {
-                        noteInfo.vexElement.treble.setStave(trebleStave); noteInfo.vexElement.treble.setXShift(trebleShift);
-                        noteInfo.vexElement.treble.setTickContext(tickContext); noteInfo.vexElement.treble.draw();
-                    }
-                    if (noteInfo.vexElement.bass && isFinite(bassShift)) {
-                        noteInfo.vexElement.bass.setStave(bassStave); noteInfo.vexElement.bass.setXShift(bassShift);
-                        noteInfo.vexElement.bass.setTickContext(tickContext); noteInfo.vexElement.bass.draw();
-                    }
-                } catch (drawError) {
-                    console.error(`--- Errore Disegno Nota ID ${noteInfo.id} ---`);
-                    console.error("Errore:", drawError); console.error("Stack Trace:", drawError.stack);
-                    console.error("Stato Nota (parziale):", { id: noteInfo.id, notes: noteInfo.notes, x: noteInfo.x, width: noteInfo.width, isRemovable: noteInfo.isRemovable });
-                    console.error(`Valori Calcolati: x=${noteInfo.x}, trebleShift=${trebleShift}, bassShift=${bassShift}`);
-                    const indexToRemove = notesToKeep.findIndex(n => n.id === noteInfo.id);
-                    if (indexToRemove > -1) { notesToKeep.splice(indexToRemove, 1); console.warn(`Nota ID ${noteInfo.id} rimossa a causa di errore disegno.`); }
+        // 3. Add NEW notes if playing
+        if (isPlaying) {
+            const lastNote = activeNotes[activeNotes.length - 1];
+            if (nextNoteIndexToAdd < allNotesSorted.length && (!lastNote || lastNote.x + lastNote.width < containerWidth - noteVisualSpacing)) {
+                const initialX = containerWidth; const groupResult = createNoteGroupInfo(nextNoteIndexToAdd, initialX);
+                if (groupResult && groupResult.info) { activeNotes.push(groupResult.info); nextNoteIndexToAdd += groupResult.notesConsumed; }
+                else if (groupResult === null && nextNoteIndexToAdd < allNotesSorted.length) {
+                    console.warn(`Skipping potentially problematic MIDI note(s) at index ${nextNoteIndexToAdd}.`);
+                    let lookaheadIndex = nextNoteIndexToAdd + 1; const firstTime = allNotesSorted[nextNoteIndexToAdd].originalTime;
+                    while (lookaheadIndex < allNotesSorted.length && (allNotesSorted[lookaheadIndex].originalTime - firstTime) < chordTimeTolerance) { lookaheadIndex++; }
+                    nextNoteIndexToAdd = lookaheadIndex;
                 }
             }
         }
-        activeNotes = notesToKeep;
-
-        // 5. Marca e Evidenzia la più a sinistra & Aggiorna Conteggio Tentativi
-        if (highlightElement) highlightElement.remove(); highlightElement = null;
-
+        // 4. Update Positions, Draw Visible Notes, Find Leftmost
+        let currentLeftmostNote = null; let minVisualX = Infinity; const notesToKeep = []; const tickContext = new VF.TickContext();
+        activeNotes.forEach(noteInfo => {
+            let visualX = noteInfo.x;
+            if (isPlaying) { noteInfo.x -= scrollPixelsPerFrame; visualX = noteInfo.x; }
+            else if (isPaused && isDragging) { visualX = noteInfo.x + manualScrollOffset; }
+            const shouldRemove = isPlaying && (noteInfo.x + noteInfo.width < -50);
+            if (!shouldRemove) {
+                if (isPlaying) notesToKeep.push(noteInfo);
+                const isVisible = visualX < containerWidth + noteInfo.width && visualX + noteInfo.width > 0;
+                if (isVisible) {
+                    if (visualX < minVisualX) { minVisualX = visualX; currentLeftmostNote = noteInfo; }
+                    try {
+                        const trebleElement = noteInfo.vexElement.treble; const bassElement = noteInfo.vexElement.bass;
+                        const trebleShift = visualX - trebleStave.getNoteStartX(); const bassShift = visualX - bassStave.getNoteStartX();
+                        if (trebleElement && trebleElement.setStave && isFinite(trebleShift)) {
+                            trebleElement.setStave(trebleStave); trebleElement.setXShift(trebleShift); trebleElement.setTickContext(tickContext);
+                            if (!trebleElement.preFormatted) trebleElement.preFormat(); trebleElement.draw();
+                        }
+                        if (bassElement && bassElement.setStave && isFinite(bassShift)) {
+                            bassElement.setStave(bassStave); bassElement.setXShift(bassShift); bassElement.setTickContext(tickContext);
+                            if (!bassElement.preFormatted) bassElement.preFormat(); bassElement.draw();
+                        }
+                    } catch (drawError) { console.error(`--- Error Drawing Note ID ${noteInfo.id} ---`, drawError); console.error("Note State:", noteInfo); }
+                }
+            }
+        });
+        if (isPlaying) { activeNotes = notesToKeep; }
+        // 5. Highlight Leftmost Note & Handle Accuracy Target
+        if (highlightElement) highlightElement.remove(); highlightElement = null; activeNotes.forEach(note => note.isRemovable = false);
         if (currentLeftmostNote) {
-            // !!! LOGICA CONTEGGIO TENTATIVI !!!
-            // Incrementa solo se la nota più a sinistra è cambiata rispetto all'ultimo frame
-            if (currentLeftmostNote.id !== lastLeftmostNoteId) {
-                notesAttempted++;
-                lastLeftmostNoteId = currentLeftmostNote.id; // Aggiorna l'ID dell'ultima nota target
-                updateAccuracyDisplay(); // Aggiorna il display
-                console.log(`Nuova nota target: ID ${lastLeftmostNoteId}, Tentativi totali: ${notesAttempted}`);
+            const highlightX = minVisualX;
+            if (isPlaying) {
+                 if (currentLeftmostNote.id !== lastLeftmostNoteId) { notesAttempted++; lastLeftmostNoteId = currentLeftmostNote.id; updateAccuracyDisplay(); }
+                 const targetNoteInArray = activeNotes.find(n => n.id === currentLeftmostNote.id); if (targetNoteInArray) targetNoteInArray.isRemovable = true;
             }
-            // --- Fine Logica Conteggio ---
-
-            currentLeftmostNote.isRemovable = true; // Marca per la logica di rimozione
             highlightElement = document.createElement('div'); highlightElement.className = 'highlight-active-note';
-            const highlightY = trebleY - 15; const highlightHeight = (bassY + staveX + 15) - highlightY;
-            if (isFinite(currentLeftmostNote.x) && isFinite(currentLeftmostNote.width)) {
-                highlightElement.style.left = `${currentLeftmostNote.x - 5}px`; highlightElement.style.top = `${highlightY}px`;
-                highlightElement.style.width = `${currentLeftmostNote.width + 10}px`; highlightElement.style.height = `${highlightHeight}px`;
+            const highlightY = trebleY - 15; const highlightHeight = (bassY + bassStave.getHeight()) - highlightY + 15;
+            const highlightWidth = (currentLeftmostNote.width && isFinite(currentLeftmostNote.width) && currentLeftmostNote.width > 10) ? currentLeftmostNote.width : 30;
+            if (isFinite(highlightX)) {
+                highlightElement.style.left = `${highlightX - 5}px`; highlightElement.style.top = `${highlightY}px`;
+                highlightElement.style.width = `${highlightWidth + 10}px`; highlightElement.style.height = `${highlightHeight}px`;
                 scoreContainer.appendChild(highlightElement);
-            } else { console.warn("Posizione non valida per highlight nota:", currentLeftmostNote); }
-        } else {
-             // Se non c'è più una nota a sinistra (es. fine brano o rimossa), resetta l'ID
-             if (lastLeftmostNoteId !== null) {
-                 lastLeftmostNoteId = null;
-             }
-        }
-
-        // Dopo aver disegnato le note, prova a identificare quelle alterate
-        if (nextNoteIndexToAdd > 0 && allNotesSorted.length > 0) {
-            const currentNote = allNotesSorted[nextNoteIndexToAdd - 1];
-            if (currentNote && currentNote.name && currentNote.name.includes('#')) {
-                // Debug: stampa la nota alterata
-                console.log('Nota alterata trovata:', currentNote);
-                
-                // Salva il colore corrente
-                const oldFill = context.fillStyle;
-                context.fillStyle = '#008000';  // verde per i diesis
-                context.font = 'bold 14px Arial';
-                
-                // Calcola la posizione del diesis
-                // Nota: scrollX è la posizione corrente dello scroll
-                const x = canvas.width / 2 - scrollX;  // posizione orizzontale relativa allo scroll
-                const noteName = currentNote.name.replace('#', ''); // Rimuovi il # per ottenere la posizione base
-                const y = trebleStave.getYForNote(noteName);
-                
-                // Disegna il diesis leggermente spostato a sinistra della nota
-                context.fillText('♯', x - 20, y + 4);
-                
-                // Ripristina il colore
-                context.fillStyle = oldFill;
-            } else if (currentNote && currentNote.name && currentNote.name.includes('b')) {
-                // Debug: stampa la nota alterata
-                console.log('Nota alterata trovata:', currentNote);
-                
-                // Salva il colore corrente
-                const oldFill = context.fillStyle;
-                context.fillStyle = '#0000FF';  // blu per i bemolli
-                context.font = 'bold 14px Arial';
-                
-                // Calcola la posizione del bemolle
-                // Nota: scrollX è la posizione corrente dello scroll
-                const x = canvas.width / 2 - scrollX;  // posizione orizzontale relativa allo scroll
-                const noteName = currentNote.name.replace('b', ''); // Rimuovi il b per ottenere la posizione base
-                const y = trebleStave.getYForNote(noteName);
-                
-                // Disegna il bemolle leggermente spostato a sinistra della nota
-                context.fillText('♭', x - 20, y + 4);
-                
-                // Ripristina il colore
-                context.fillStyle = oldFill;
-            }
-        }
-
-        // 6. Richiedi Prossimo Frame
-        if (isPlaying) {
-            animationId = requestAnimationFrame(draw);
-        }
+            } else { console.warn("Invalid position/width for highlight:", {id: currentLeftmostNote.id, x: highlightX, width: highlightWidth}); }
+        } else { if (isPlaying && lastLeftmostNoteId !== null) { lastLeftmostNoteId = null; } }
+        // 6. Request Next Frame
+        if (isPlaying) { animationId = requestAnimationFrame(draw); }
+        else if (isPaused && isDragging) { animationId = requestAnimationFrame(draw); }
+        else { animationId = null; }
     }
 
-    // --- Gestione Input MIDI ---
-    function handleMIDIMessage(event) { /* ... (invariato) ... */
-        const command = event.data[0] >> 4; const noteNumber = event.data[1];
-        const velocity = event.data.length > 2 ? event.data[2] : 0;
-        const noteName = midiNumberToNoteName(noteNumber);
-        lastNoteDiv.textContent = `Ultima Nota MIDI: ${noteName || noteNumber} (Vel: ${velocity})`;
-        if (command === 9 && velocity > 0 && noteName && isPlaying) { removeMatchingLeftmostNote(noteName); }
+
+    // --- MIDI Input Handling ---
+    function handleMIDIMessage(event) {
+        const command = event.data[0] >> 4; const noteNumber = event.data[1]; const velocity = event.data.length > 2 ? event.data[2] : 0;
+        // Usa l'armatura anche per interpretare l'input MIDI per il matching? Forse più intuitivo.
+        const noteNameVex = midiNumberToNoteName(noteNumber, keySignatureAccidentals);
+        lastNoteDiv.textContent = `Last MIDI Note: ${noteNameVex || noteNumber} (Vel: ${velocity})`;
+        if (command === 9 && velocity > 0 && noteNameVex) { removeMatchingLeftmostNote(noteNameVex); }
     }
 
-    // --- Funzione Rimozione Nota (Solo la più a sinistra) ---
+    // --- Note Removal Logic (Accuracy Check) ---
     function removeMatchingLeftmostNote(playedNoteNameVex) {
+        if (!isPlaying) { lastNoteDiv.textContent += ` (Ignored: Paused)`; return; }
         const targetNoteIndex = activeNotes.findIndex(note => note.isRemovable);
-        if (targetNoteIndex === -1) { lastNoteDiv.textContent += ` (Nessuna nota attiva)`; return; }
-        const targetNoteInfo = activeNotes[targetNoteIndex];
-        let match = false;
+        if (targetNoteIndex === -1) { lastNoteDiv.textContent += ` (No active target)`; return; }
+        const targetNoteInfo = activeNotes[targetNoteIndex]; let match = false;
+        // Il matching ora usa i nomi influenzati dall'armatura
         if (targetNoteInfo.notes.treble.includes(playedNoteNameVex) || targetNoteInfo.notes.bass.includes(playedNoteNameVex)) { match = true; }
         if (match) {
-            console.log(`CORRETTO! Rimozione gruppo/nota ID ${targetNoteInfo.id} (${playedNoteNameVex})`);
-            lastNoteDiv.textContent += ` (CORRETTO!)`;
-            // !!! Incrementa conteggio note corrette !!!
-            notesHitCorrectly++;
-            updateAccuracyDisplay(); // Aggiorna display
-            activeNotes.splice(targetNoteIndex, 1);
-            if (highlightElement) highlightElement.remove(); highlightElement = null;
-            // Dopo una rimozione corretta, la nota target cambia, quindi resetta l'ID
-            // per permettere il conteggio della prossima nota che diventerà target
-            lastLeftmostNoteId = null;
+            console.log(`CORRECT! Removing ID ${targetNoteInfo.id} (${playedNoteNameVex})`); lastNoteDiv.textContent += ` (CORRECT!)`;
+            notesHitCorrectly++; updateAccuracyDisplay(); activeNotes.splice(targetNoteIndex, 1);
+            if (highlightElement) { highlightElement.remove(); highlightElement = null; } lastLeftmostNoteId = null;
         } else {
-            console.log(`ERRATO! Nota ${playedNoteNameVex} vs gruppo/nota attiva ID ${targetNoteInfo.id}`);
-            lastNoteDiv.textContent += ` (ERRATO)`;
-            const errOverlay = document.createElement('div'); errOverlay.className = 'error-flash';
-            scoreContainer.appendChild(errOverlay);
+            console.log(`WRONG! Played ${playedNoteNameVex} vs target ID ${targetNoteInfo.id} {T:[${targetNoteInfo.notes.treble.join(',') || 'none'}], B:[${targetNoteInfo.notes.bass.join(',') || 'none'}]}`);
+            lastNoteDiv.textContent += ` (WRONG!)`; const errOverlay = document.createElement('div'); errOverlay.className = 'error-flash'; scoreContainer.appendChild(errOverlay);
             setTimeout(() => { if (errOverlay.parentNode) errOverlay.remove(); }, 200);
         }
     }
 
-    // --- Funzione per Aggiornare Display Precisione ---
+    // --- Accuracy Display Update ---
     function updateAccuracyDisplay() {
-        if (!accuracyDisplay) return; // Sicurezza
-        let percentage = 0;
-        if (notesAttempted > 0) {
-            percentage = (notesHitCorrectly / notesAttempted) * 100;
-        }
-        accuracyDisplay.textContent = `Precisione: ${percentage.toFixed(1)}% (${notesHitCorrectly}/${notesAttempted})`;
+        if (!accuracyDisplay) return; let percentage = 0; if (notesAttempted > 0) { percentage = (notesHitCorrectly / notesAttempted) * 100; }
+        accuracyDisplay.textContent = `Accuracy: ${percentage.toFixed(1)}% (${notesHitCorrectly}/${notesAttempted})`;
     }
 
-
-    // --- Controllo Velocità (Slider) ---
-    speedSlider.addEventListener('input', (event) => { /* ... (invariato) ... */
-        currentVisualBPM = parseInt(event.target.value, 10);
-        bpmDisplay.textContent = `${currentVisualBPM} BPM`;
-        scrollPixelsPerFrame = calculateScrollPixelsPerFrame(currentVisualBPM);
+    // --- Speed Control (Slider) ---
+    speedSlider.addEventListener('input', (event) => {
+        currentVisualBPM = parseInt(event.target.value, 10); bpmDisplay.textContent = `${currentVisualBPM} BPM`; scrollPixelsPerFrame = calculateScrollPixelsPerFrame(currentVisualBPM);
     });
 
-    // --- Event Listeners Bottoni ---
+    // --- Button Event Listeners ---
     playBtn.addEventListener('click', playAnimation);
     pauseBtn.addEventListener('click', pauseAnimation);
     stopBtn.addEventListener('click', stopAnimation);
 
-    // --- Inizializzazione MIDI ---
-    function setupMIDI() { /* ... (invariato) ... */
-        if (navigator.requestMIDIAccess) {
-            midiStatusDiv.textContent = 'Richiesta accesso MIDI...';
-            navigator.requestMIDIAccess({ sysex: false })
-                .then(onMIDISuccess, onMIDIFailure)
-                .catch(err => { console.error("Errore iniziale richiesta MIDI:", err); onMIDIFailure("Errore richiesta accesso."); });
-        } else { midiStatusDiv.textContent = 'Web MIDI API non supportata.'; console.warn("Web MIDI API non supportata!"); alert("Il tuo browser non supporta Web MIDI API."); }
+    // --- MIDI Initialization ---
+    function setupMIDI() {
+        if (navigator.requestMIDIAccess) { midiStatusDiv.textContent = 'Requesting MIDI access...'; navigator.requestMIDIAccess({ sysex: false }).then(onMIDISuccess, onMIDIFailure).catch(err => { console.error("Initial MIDI access request error:", err); onMIDIFailure(`Error requesting access: ${err.message || err}`); }); }
+        else { midiStatusDiv.textContent = 'Web MIDI API not supported.'; console.warn("Web MIDI API not supported!"); alert("Your browser does not support Web MIDI API."); }
     }
-    function onMIDISuccess(midiAccess) { /* ... (invariato) ... */
-        midiStatusDiv.textContent = 'Accesso MIDI OK. In ascolto...'; connectInputs(midiAccess);
-        midiAccess.onstatechange = (event) => { console.log('Stato MIDI cambiato:', event.port.name, event.port.state); midiStatusDiv.textContent = 'Stato MIDI cambiato, ricollego...'; connectInputs(midiAccess); };
+    function onMIDISuccess(midiAccess) {
+        midiStatusDiv.textContent = 'MIDI Access OK. Listening...'; connectInputs(midiAccess); midiAccess.onstatechange = (event) => { console.log('MIDI state changed:', event.port.name, event.port.state); midiStatusDiv.textContent = 'MIDI state changed, reconnecting...'; connectInputs(midiAccess); };
     }
-    function connectInputs(midiAccess) { /* ... (invariato) ... */
-        const inputs = midiAccess.inputs; let foundDevice = false;
-        inputs.forEach(input => input.onmidimessage = null);
-        inputs.forEach(input => { input.onmidimessage = handleMIDIMessage; console.log('Ascolto MIDI su:', input.name); if (!foundDevice) midiStatusDiv.textContent = `Ascolto su: ${input.name}`; else if (!midiStatusDiv.textContent.includes(' e altri')) midiStatusDiv.textContent += ' (e altri)'; foundDevice = true; });
-        if (!foundDevice) midiStatusDiv.textContent = 'Nessun dispositivo MIDI connesso.';
+    function connectInputs(midiAccess) {
+        const inputs = midiAccess.inputs; let foundDevice = false; console.log(`Found ${inputs.size} MIDI input(s).`); inputs.forEach(input => { input.onmidimessage = null; });
+        inputs.forEach(input => { input.onmidimessage = handleMIDIMessage; console.log(`Listening for MIDI messages on: ${input.name} (ID: ${input.id}, State: ${input.state})`); if (!foundDevice) { midiStatusDiv.textContent = `Listening on: ${input.name}`; } else if (!midiStatusDiv.textContent.includes(' and others')) { midiStatusDiv.textContent += ' (and others)'; } foundDevice = true; });
+        if (!foundDevice) { midiStatusDiv.textContent = 'No MIDI input devices connected.'; }
     }
-    function onMIDIFailure(msg) { /* ... (invariato) ... */
-        midiStatusDiv.textContent = `Errore accesso MIDI: ${msg}`; console.error(`Errore MIDI: ${msg}`); alert(`Impossibile accedere ai dispositivi MIDI: ${msg}`); }
+    function onMIDIFailure(msg) {
+        midiStatusDiv.textContent = `MIDI Access Error: ${msg}`; console.error(`MIDI Error: ${msg}`);
+    }
 
-    // --- Avvio ---
+    // --- Application Start ---
     setupMIDI();
-    resetAnimation(); // Imposta stato iniziale bottoni e display precisione
-    console.log("Pronto. Seleziona un file MIDI per iniziare.");
+    resetAnimation();
+    console.log("Ready. Select a MIDI file to begin.");
 
-    // Listener per avviare Tone.js
-    document.body.addEventListener('click', async () => { if (!toneJsStarted) { console.log("Tentativo di avviare Tone.js su interazione utente..."); await initializeTone(); } }, { once: true });
+    // Listener to start Tone.js ON USER INTERACTION (Make sure UNCOMMENTED)
+    document.body.addEventListener('click', async () => {
+         if (!toneJsStarted) {
+             console.log("Attempting to start Tone.js on user interaction...");
+             await initializeTone();
+         }
+    }, { once: true });
 
-}); // Fine DOMContentLoaded
+}); // End DOMContentLoaded

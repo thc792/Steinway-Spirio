@@ -1,4 +1,6 @@
 <!DOCTYPE html>
+* Copyright (c) 2024 [Pentagramma MIDI Scorrevole]
+* Distributed under the MIT License. See LICENSE.md for details.
 <html>
 <head>
     <title>Pentagramma MIDI Scorrevole (Player)</title>
@@ -9,139 +11,129 @@
     <script src="https://unpkg.com/@tonejs/midi"></script>
     <!-- Carica Tone.js per l'audio -->
     <script src="https://unpkg.com/tone"></script>
-    <!-- Carica il file CSS personalizzato -->
+    <!-- Carica il file CSS personalizzato (ASSICURATI CHE IL PERCORSO SIA CORRETTO!) -->
     <link rel="stylesheet" href="style.css">
     <style>
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; /* Font più moderno */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 15px; /* Aumentato padding */
+            padding: 15px;
             margin: 0;
-            background-color: #f7f2e9; /* Sfondo beige molto chiaro */
-            color: #4a3728; /* Colore testo principale marrone scuro */
-            overflow: hidden;
+            background-color: #f7f2e9;
+            color: #4a3728;
+            overflow: hidden; /* Nasconde lo scroll della pagina */
         }
         h1 {
             margin-top: 5px;
-            margin-bottom: 20px; /* Più spazio sotto il titolo */
-            color: #5c4033; /* Marrone scuro per il titolo */
-            font-weight: 300; /* Titolo più leggero */
+            margin-bottom: 20px;
+            color: #5c4033;
+            font-weight: 300;
             letter-spacing: 1px;
         }
         /* Stile comune per i pannelli */
         #file-loader, #controls, #status {
-            margin-bottom: 15px; /* Aumentato spazio tra pannelli */
-            padding: 12px 20px; /* Aumentato padding interno */
-            border: 1px solid #d4c8b8; /* Bordo beige più scuro */
-            background-color: #e8dacb; /* Sfondo pannelli beige più caldo */
+            margin-bottom: 15px;
+            padding: 12px 20px;
+            border: 1px solid #d4c8b8;
+            background-color: #e8dacb;
             width: 95%;
-            max-width: 1100px; /* Leggermente più stretto */
+            max-width: 1100px;
             text-align: center;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.08); /* Ombra più morbida */
-            border-radius: 6px; /* Angoli più arrotondati */
-            font-size: 0.95em; /* Testo leggermente più grande */
+            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+            border-radius: 6px;
+            font-size: 0.95em;
             display: flex;
             justify-content: center;
             align-items: center;
             flex-wrap: wrap;
-            gap: 20px; /* Più spazio tra elementi */
+            gap: 20px;
         }
         #status div, #file-loader span, #controls div, #controls button {
-             margin: 0 5px; /* Ridotto margine laterale, gap fa il lavoro */
-             color: #4a3728; /* Colore testo pannelli */
+             margin: 0 5px;
+             color: #4a3728;
         }
         /* Stile specifico File Loader */
-        #file-loader label {
-            font-weight: 600; /* Leggermente bold */
-            margin-right: 8px;
-        }
-        #midi-file-input {
-            border: 1px solid #c8b8a8; /* Bordo input */
-            padding: 6px 10px;
-            border-radius: 4px;
-            background-color: #fff; /* Sfondo bianco per input */
-            color: #4a3728;
-        }
-        #file-status {
-            font-style: italic;
-            color: #6b4f2c; /* Marrone medio per status file */
-        }
+        #file-loader label { font-weight: 600; margin-right: 8px; }
+        #midi-file-input { border: 1px solid #c8b8a8; padding: 6px 10px; border-radius: 4px; background-color: #fff; color: #4a3728; }
+        #file-status { font-style: italic; color: #6b4f2c; }
 
         /* Stile specifico Controlli */
-        #controls button {
-            padding: 9px 18px;
-            cursor: pointer;
-            border: none;
-            border-radius: 5px;
-            color: white;
-            font-weight: 600; /* Testo bottone bold */
-            transition: background-color 0.2s ease, transform 0.1s ease; /* Transizione fluida */
-            box-shadow: 0 1px 2px rgba(0,0,0,0.15);
-        }
-        #controls button:hover:not(:disabled) {
-             transform: translateY(-1px); /* Leggero effetto al hover */
-             box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-        }
-        #controls button:active:not(:disabled) {
-             transform: translateY(0px);
-             box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
-        }
-        #play-btn { background-color: #a0522d; } /* Sienna */
-        #play-btn:hover:not(:disabled) { background-color: #8b4513; } /* Dark Sienna */
-        #pause-btn { background-color: #cd853f; } /* Peru */
-        #pause-btn:hover:not(:disabled) { background-color: #b87333; } /* Darker Peru */
-        #stop-btn { background-color: #a52a2a; } /* Brown */
-        #stop-btn:hover:not(:disabled) { background-color: #8b0000; } /* Dark Red */
-        #controls button:disabled {
-            background-color: #b8a898; /* Grigio/Marrone desaturato */
-            cursor: not-allowed;
-            box-shadow: none;
-            transform: none;
-        }
+        #controls button { padding: 9px 18px; cursor: pointer; border: none; border-radius: 5px; color: white; font-weight: 600; transition: background-color 0.2s ease, transform 0.1s ease; box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
+        #controls button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        #controls button:active:not(:disabled) { transform: translateY(0px); box-shadow: inset 0 1px 2px rgba(0,0,0,0.1); }
+        #play-btn { background-color: #a0522d; } #play-btn:hover:not(:disabled) { background-color: #8b4513; }
+        #pause-btn { background-color: #cd853f; } #pause-btn:hover:not(:disabled) { background-color: #b87333; }
+        #stop-btn { background-color: #a52a2a; } #stop-btn:hover:not(:disabled) { background-color: #8b0000; }
+        #controls button:disabled { background-color: #b8a898; cursor: not-allowed; box-shadow: none; transform: none; }
 
         /* Stile specifico Speed Control */
         #speed-control { display: flex; align-items: center; gap: 8px; }
         #speed-control label { font-weight: 600; margin: 0; }
         #speed-slider { width: 150px; cursor: pointer; vertical-align: middle; }
-        /* Stile per la traccia dello slider */
         #speed-slider::-webkit-slider-runnable-track { background: #d4c8b8; height: 6px; border-radius: 3px; }
         #speed-slider::-moz-range-track { background: #d4c8b8; height: 6px; border-radius: 3px; }
-        /* Stile per il cursore dello slider */
         #speed-slider::-webkit-slider-thumb { background: #8f6f4d; height: 16px; width: 16px; border-radius: 50%; margin-top: -5px; cursor: pointer; }
         #speed-slider::-moz-range-thumb { background: #8f6f4d; height: 16px; width: 16px; border-radius: 50%; border: none; cursor: pointer; }
-
         #bpm-display { font-weight: bold; min-width: 65px; text-align: center; background-color: #f1e9dd; padding: 4px 8px; border-radius: 4px; border: 1px solid #d4c8b8; color: #5c4033; }
 
         /* Stile specifico Status */
-        #status { justify-content: space-around; } /* Spazia meglio gli elementi status */
+        #status { justify-content: space-around; }
         #status div { font-size: 0.9em; }
 
         /* Contenitore Pentagramma */
         #score-container {
             width: 98%;
             max-width: 1400px;
-            height: 250px;
+            height: 250px; /* Altezza fissa del contenitore */
             overflow: hidden;
-            position: relative;
-            border: 1px solid #a89888; /* Bordo più scuro */
-            background-color: #ffffff; /* Sfondo bianco per leggibilità */
+            position: relative; /* Necessario per posizionare elementi figli assoluti */
+            border: 1px solid #a89888;
+            background-color: #ffffff;
             box-shadow: 0 3px 6px rgba(0,0,0,0.1);
             margin: 0;
-            border-radius: 3px; /* Leggero arrotondamento */
+            border-radius: 3px;
         }
-        #score-canvas { display: block; }
+        #score-canvas {
+             display: block; /* Rimuove eventuale spazio sotto il canvas */
+        }
 
-        /* Stili per Highlight e Errori (invariati per chiarezza funzionale) */
+        /* Stili per Highlight e Errori */
         .highlight-active-note { position: absolute; border: 2px solid rgba(52, 152, 219, 0.7); background-color: rgba(52, 152, 219, 0.1); box-sizing: border-box; pointer-events: none; z-index: 5; border-radius: 3px; }
         .error-flash { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(255, 0, 0, 0.3); z-index: 100; pointer-events: none; animation: fadeOut 0.2s ease-out forwards; }
         @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
 
-        /* Assicurati che il canvas sia trasparente */
-        #score {
-            background: transparent;
+        /* --- STILE AGGIORNATO PER LA LINEA DI PARTENZA --- */
+        #start-line {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 180px;        /* <<< SPOSTATA PIÙ AVANTI (aggiusta se necessario) */
+            width: 3px;
+            background-color: #7FFF00; /* <<< COLORE EVIDENZIATORE (Chartreuse) */
+            z-index: 1;
+            pointer-events: none;
+            box-shadow: 1px 0 3px rgba(0,0,0,0.2);
         }
+        /* --- NUOVO STILE PER IL TESTO "START" --- */
+        #start-text {
+            position: absolute;
+            top: 5px;           /* Un po' di spazio dall'alto */
+            left: 180px;        /* <<< ALLINEATO CON LA LINEA */
+            transform: translateX(-50%); /* Centra il testo sulla linea */
+            background-color: #7FFF00; /* Sfondo uguale alla linea */
+            color: #333;        /* Testo scuro per contrasto */
+            padding: 2px 8px;   /* Padding interno */
+            font-size: 0.8em;   /* Dimensione testo piccola */
+            font-weight: bold;
+            border-radius: 3px; /* Angoli arrotondati */
+            z-index: 2;         /* Sopra la linea, sotto l'highlight */
+            pointer-events: none; /* Non intercettabile dal mouse */
+            white-space: nowrap; /* Evita che il testo vada a capo */
+        }
+        /* --- FINE NUOVI STILI --- */
+
     </style>
 </head>
 <body>
@@ -162,7 +154,7 @@
         <button id="stop-btn" disabled>Stop</button>
         <div id="speed-control">
             <label for="speed-slider">Velocità Visiva:</label>
-            <input type="range" id="speed-slider" min="20" max="200" value="100">
+            <input type="range" id="speed-slider" min="20" max="300" value="100">
             <span id="bpm-display">100 BPM</span>
         </div>
     </div>
@@ -172,16 +164,19 @@
         <div id="midi-status">Stato MIDI: Inizializzazione...</div>
         <div id="last-note">Ultima Nota MIDI: Nessuna</div>
         <div id="playback-tempo">Tempo File: N/D</div>
-        <!-- !!! ASSICURATI CHE QUESTA RIGA SIA PRESENTE !!! -->
         <div id="accuracy-display">Precisione: N/A</div>
     </div>
 
     <!-- Contenitore Pentagramma -->
     <div id="score-container">
         <canvas id="score-canvas"></canvas>
+        <!-- !!! ELEMENTI HTML PER LINEA E TESTO !!! -->
+        <div id="start-line"></div>
+        <div id="start-text">START</div> <!-- Puoi cambiare in "GO" se preferisci -->
     </div>
 
-    <script src="script.js"></script> <!-- Assicurati che sia l'ultima versione JS -->
+    <!-- Assicurati che sia l'ultima versione JS che abbiamo concordato -->
+    <script src="script.js"></script>
 
 </body>
 </html>
