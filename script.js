@@ -136,10 +136,30 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function calculateScrollPixelsPerFrame(bpm) {
-        const minPPF = 0.5; const maxPPF = 4.0; const minBPM = 20; const maxBPM = 300;
-        if (bpm <= minBPM) return minPPF; if (bpm >= maxBPM) return maxPPF;
-        const bpmR = maxBPM - minBPM; const ppfR = maxPPF - minPPF;
-        const normBpm = (bpmR === 0) ? 0 : (bpm - minBPM) / bpmR; return minPPF + normBpm * ppfR;
+        // --- VALORI DI VELOCITÀ AUMENTATI ---
+        // Aumentiamo i pixel minimi e massimi scrollati per frame (PPF)
+        // Modifica ulteriormente questi valori se è ancora troppo lento o diventa troppo veloce.
+        const minPPF = 1.0; // Precedentemente 0.5 - Velocità minima leggermente più alta
+        const maxPPF = 10.0; // Precedentemente 4.0 - Velocità massima significativamente più alta
+        // --- FINE VALORI DI VELOCITÀ AUMENTATI ---
+
+        const minBPM = 20;  // L'impostazione BPM più bassa sullo slider (o minimo logico)
+        const maxBPM = 300; // L'impostazione BPM più alta sullo slider (o massimo logico)
+                            // IMPORTANTE: Assicurati che il tuo slider HTML (<input id="speed-slider">)
+                            // abbia un attributo 'max' che corrisponda circa a questo (es. max="300")
+                            // se vuoi che lo slider possa raggiungere la velocità visuale massima.
+
+        if (bpm <= minBPM) return minPPF;
+        if (bpm >= maxBPM) return maxPPF;
+
+        // Interpolazione lineare: Mappa l'intervallo di BPM all'intervallo di PPF
+        const bpmRange = maxBPM - minBPM; // Intervallo dei BPM
+        const ppfRange = maxPPF - minPPF; // Intervallo dei Pixel Per Frame
+        // Normalizza il BPM corrente all'interno del suo intervallo (un valore tra 0 e 1)
+        const normalizedBpm = (bpmRange === 0) ? 0 : (bpm - minBPM) / bpmRange;
+
+        // Calcola i pixel per frame corrispondenti usando il BPM normalizzato e l'intervallo PPF
+        return minPPF + normalizedBpm * ppfRange;
     }
 
     // --- File Loading ---
